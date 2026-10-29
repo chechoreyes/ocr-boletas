@@ -1,6 +1,6 @@
 # OCR de boletas chilenas con un modelo de visión local
 
-Extrae datos estructurados (emisor, RUT, fecha, folio, monto, IVA y medio de pago) desde **fotos de boletas electrónicas chilenas** y los guarda en un Excel. Todo corre en tu computador con [Ollama](https://ollama.com): las imágenes **no salen de tu máquina**, algo importante porque una boleta contiene RUT y datos de compra.
+Extrae datos estructurados (emisor, RUT, fecha, folio, monto, IVA y medio de pago) desde **fotos de boletas electrónicas chilenas** y los guarda en un Excel. Por defecto todo corre en tu computador con [Ollama](https://ollama.com): las imágenes **no salen de tu máquina**, algo importante porque una boleta contiene RUT y datos de compra. Opcionalmente puede usar la API alojada de **NVIDIA NIM**; en ese modo las imágenes **sí se envían a los servidores de NVIDIA** (ver [Usar la API de NVIDIA NIM](#usar-la-api-de-nvidia-nim-opcional)).
 
 Está pensado para un notebook **sin GPU y con 8 GB de RAM**.
 
@@ -12,6 +12,7 @@ Está pensado para un notebook **sin GPU y con 8 GB de RAM**.
 - [Requisitos](#requisitos)
 - [Instalación](#instalación)
 - [Uso](#uso)
+- [Usar la API de NVIDIA NIM (opcional)](#usar-la-api-de-nvidia-nim-opcional)
 - [Resultado](#resultado)
 - [Cómo funciona](#cómo-funciona)
 - [Validaciones y la columna `revisar`](#validaciones-y-la-columna-revisar)
@@ -53,7 +54,7 @@ Campos extraídos:
 - **Windows, macOS o Linux** (desarrollado y probado en Windows).
 - **Python 3.10 o superior.**
 - **[uv](https://docs.astral.sh/uv/)** como gestor de paquetes (o `pip`, ver más abajo).
-- **[Ollama](https://ollama.com/download)** instalado y en ejecución.
+- **[Ollama](https://ollama.com/download)** instalado y en ejecución (backend local), **o** una API key de NVIDIA y el paquete `openai` (backend `nim`).
 - **RAM:** al menos 8 GB. El modelo por defecto (`gemma3:4b`) ocupa unos pocos GB; cierra el navegador y otros programas pesados mientras corre.
 - **GPU:** no es necesaria. Sin GPU el procesamiento es más lento (ver [Limitaciones](#limitaciones)).
 
@@ -117,13 +118,16 @@ Con `pip`, usa `python main.py`.
 
 ### Opciones
 
-| Opción              | Valor por defecto        | Descripción                                           |
-| ------------------- | ------------------------ | ----------------------------------------------------- |
-| `--carpeta`         | `boletas`                | Carpeta con las imágenes                              |
-| `--salida`          | `boletas_extraidas.xlsx` | Archivo Excel de salida                               |
-| `--modelo`          | `gemma3:4b`              | Modelo de visión de Ollama                            |
-| `--debug`           | desactivado              | Muestra la respuesta cruda del modelo por cada franja |
-| `--sin-autorecorte` | desactivado              | No recorta la boleta dentro de la foto                |
+| Opción               | Valor por defecto                        | Descripción                                                           |
+| -------------------- | ---------------------------------------- | --------------------------------------------------------------------- |
+| `--carpeta`          | `boletas`                                | Carpeta con las imágenes                                              |
+| `--salida`           | `boletas_extraidas.xlsx`                 | Archivo Excel de salida                                               |
+| `--backend`          | `ollama`                                 | `ollama` (local) o `nim` (API de NVIDIA)                              |
+| `--modelo`           | según el backend (`gemma3:4b` en Ollama) | Modelo de visión a usar                                               |
+| `--listar-modelos`   | —                                        | Solo con `nim`: lista los modelos disponibles para tu clave y termina |
+| `--limite-imagen-kb` | `135` con `nim`, sin límite con Ollama   | Tamaño máximo de cada imagen enviada; `0` desactiva el límite         |
+| `--debug`            | desactivado                              | Muestra la respuesta cruda del modelo por cada franja                 |
+| `--sin-autorecorte`  | desactivado                              | No recorta la boleta dentro de la foto                                |
 
 ### Ejemplos
 
@@ -154,6 +158,86 @@ Archivo generado: C:\...\boletas_extraidas.xlsx
 ```
 
 El programa termina con código de error si **ninguna** boleta se procesó sin errores.
+
+---
+
+## Usar la API de NVIDIA NIM (opcional)
+
+El programa puede usar la API alojada de [NVIDIA NIM](https://build.nvidia.com) en lugar de Ollama. Sirve si tu equipo es muy lento o quieres probar modelos más grandes que los que caben en 8 GB de RAM.
+
+> **Privacidad:** con este backend cada imagen (con RUT, montos y comercio) se envía a los servidores de NVIDIA. Si esas boletas son de terceros o contienen datos sensibles, revisa antes si puedes enviarlas. El programa muestra un aviso al iniciar.
+
+### Configuración
+
+1. Crea una cuenta en [build.nvidia.com](https://build.nvidia.com) y genera una **API key** (empieza con `nvapi-`).
+2. Instala el cliente: `uv add openai` (o `pip install openai`).
+3. Define la clave como variable de entorno. **No la escribas en el código ni la subas a un repositorio.**
+
+    ```powershell
+    # Solo para esta sesión de PowerShell
+    $env:NVIDIA_API_KEY = "nvapi-..."
+
+    # Permanente (se aplica en terminales nuevas)
+    setx NVIDIA_API_KEY "nvapi-..."
+    ```
+
+### Elegir un modelo
+
+El catálogo cambia con el tiempo y depende de tu cuenta, así que lista lo que tienes disponible:
+
+```powershell
+uv run main.py --backend nim --listar-modelos          # solo modelos de visión (filtro por nombre)
+uv run main.py --backend nim --listar-modelos todos    # todos los modelos
+```
+
+Luego ejecuta con el que elijas:
+
+```powershell
+uv run main.py --backend nim --modelo meta/llama-3.2-11b-vision-instruct --debug
+```
+
+El modelo por defecto del backend es `meta/llama-3.2-90b-vision-instruct` (Llama 3.2 Vision tiene salida estructurada documentada por NVIDIA y, según listados de terceros de octubre de 2026, está en la capa gratuita). **No se verificó que esté disponible en tu cuenta.** NVIDIA retira modelos con el tiempo y responde HTTP 410 a los retirados (el `nvidia/llama-3.1-nemotron-nano-vl-8b-v1`, por ejemplo, figura en listas de retiro). Si aparece un error 404, 410 o de acceso, elige otro de la lista.
+
+### Detalles del backend
+
+- **Protocolo:** el programa usa el endpoint compatible con OpenAI (`https://integrate.api.nvidia.com/v1`) y envía cada franja como imagen en base64.
+- **Salida estructurada:** prueba en orden `response_format` con `json_schema`, la extensión `nvext.guided_json` de NVIDIA, `json_object` y texto libre, hasta que un modo funcione.
+- **Tamaño de imagen:** como precaución, cada imagen se comprime a un máximo de 135 KB. Algunos endpoints de NVIDIA limitan la imagen en base64 a unos 180.000 caracteres, aunque no se confirmó para los modelos de visión. Si tu modelo acepta imágenes mayores, usa `--limite-imagen-kb 0` para conservar toda la calidad.
+- **Límite de solicitudes:** la capa gratuita tiene un límite de solicitudes por minuto (reportado en torno a 40, según proyectos de terceros; confirma el valor vigente en tu cuenta). Cada boleta usa 2 solicitudes y el cliente reintenta automáticamente cuando recibe un 429.
+- **Errores de acceso:** si la clave es inválida o el modelo no está disponible para tu cuenta, el programa se detiene de inmediato con un mensaje claro y no genera el Excel.
+
+### `main2.py`: versión solo NVIDIA, con la clave en un `.env`
+
+`main2.py` es una versión independiente que usa únicamente la API de NVIDIA (sin Ollama) y lee la clave desde un archivo `.env`.
+
+1. Instala las dependencias:
+
+    ```powershell
+    uv add openai python-dotenv pandas pydantic openpyxl pillow
+    ```
+
+2. Copia `.env.example` como `.env`, junto a `main2.py`, y pon tu clave:
+
+    ```
+    NVIDIA_API_KEY=nvapi-...
+    # opcional: fuerza un modelo
+    NVIDIA_MODEL=meta/llama-3.2-90b-vision-instruct
+    ```
+
+3. **Agrega `.env` a tu `.gitignore`** para no subir la clave a un repositorio.
+4. Ejecuta:
+
+    ```powershell
+    uv run main2.py --listar-modelos     # modelos de visión disponibles con tu clave
+    uv run main2.py --debug
+    ```
+
+Diferencias respecto al backend `nim` de `main.py`:
+
+- **Elige el modelo solo:** usa `--modelo`, si no `NVIDIA_MODEL` del `.env`, y si tampoco existe, el primero disponible con tu clave de `MODELOS_PREFERIDOS` (Llama 3.2 90B Vision, luego 11B). Se evitan a propósito los modelos "reasoning", porque gastan tokens pensando y pueden romper el JSON.
+- **Pausa entre solicitudes:** `--rpm` (por defecto 30) espacia las llamadas para no chocar con el límite de la capa gratuita.
+- **Modelo retirado:** si NVIDIA responde 410, se detiene con un mensaje que lo explica.
+- **Prioridad de la clave:** una variable `NVIDIA_API_KEY` ya definida en el sistema tiene prioridad sobre la del `.env`.
 
 ---
 
@@ -324,19 +408,23 @@ Las validaciones son específicas de Chile: RUT con dígito verificador módulo 
 
 ## Solución de problemas
 
-| Síntoma                                             | Causa probable                                      | Qué hacer                                                                          |
-| --------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `ConnectionError` o no conecta con Ollama           | Ollama no está corriendo                            | Abre la aplicación de Ollama o ejecuta `ollama serve`                              |
-| `model '...' not found`                             | El modelo no está descargado                        | `ollama pull gemma3:4b`                                                            |
-| `unknown model architecture: 'mllama'`              | Bug de Ollama con `llama3.2-vision`                 | Usa otro modelo (ver [Modelos probados](#modelos-probados))                        |
-| `Invalid JSON: EOF while parsing` / respuesta vacía | El modelo no generó nada con la salida estructurada | El programa reintenta con otros modos. Si persiste, prueba otro modelo             |
-| `prediction aborted, token repeat limit reached`    | El modelo cayó en un bucle de repetición            | Ya se mitiga con `repeat_penalty` y `temperature`. Si persiste, prueba otro modelo |
-| Muy lento o el equipo se congela                    | Poca RAM disponible                                 | Cierra otros programas, usa un modelo más pequeño                                  |
-| Campos vacíos en muchas boletas                     | Foto borrosa, torcida o con poca luz                | Revisa [Consejos para mejores fotos](#consejos-para-mejores-fotos) y usa `--debug` |
-| Folio o fecha tomados de otra boleta                | Había una boleta vecina en la foto                  | Una sola boleta por foto, o recórtala antes                                        |
-| El recorte automático corta mal                     | Contraste insuficiente entre papel y fondo          | Usa `--sin-autorecorte`                                                            |
-| `PermissionError` al guardar el Excel               | El archivo está abierto en Excel                    | Ciérralo y vuelve a ejecutar                                                       |
-| `No se encontraron imágenes`                        | La carpeta está vacía o con otras extensiones       | Revisa `--carpeta` y que las fotos sean `.jpg`, `.jpeg`, `.png` o `.webp`          |
+| Síntoma                                             | Causa probable                                       | Qué hacer                                                                          |
+| --------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `ConnectionError` o no conecta con Ollama           | Ollama no está corriendo                             | Abre la aplicación de Ollama o ejecuta `ollama serve`                              |
+| `model '...' not found`                             | El modelo no está descargado                         | `ollama pull gemma3:4b`                                                            |
+| `unknown model architecture: 'mllama'`              | Bug de Ollama con `llama3.2-vision`                  | Usa otro modelo (ver [Modelos probados](#modelos-probados))                        |
+| `Invalid JSON: EOF while parsing` / respuesta vacía | El modelo no generó nada con la salida estructurada  | El programa reintenta con otros modos. Si persiste, prueba otro modelo             |
+| `prediction aborted, token repeat limit reached`    | El modelo cayó en un bucle de repetición             | Ya se mitiga con `repeat_penalty` y `temperature`. Si persiste, prueba otro modelo |
+| Muy lento o el equipo se congela                    | Poca RAM disponible                                  | Cierra otros programas, usa un modelo más pequeño                                  |
+| Campos vacíos en muchas boletas                     | Foto borrosa, torcida o con poca luz                 | Revisa [Consejos para mejores fotos](#consejos-para-mejores-fotos) y usa `--debug` |
+| Folio o fecha tomados de otra boleta                | Había una boleta vecina en la foto                   | Una sola boleta por foto, o recórtala antes                                        |
+| El recorte automático corta mal                     | Contraste insuficiente entre papel y fondo           | Usa `--sin-autorecorte`                                                            |
+| `Falta la variable de entorno NVIDIA_API_KEY`       | No se definió la clave (modo `nim`)                  | Define `$env:NVIDIA_API_KEY` y abre la terminal de nuevo si usaste `setx`          |
+| `NVIDIA rechazó la solicitud` (401, 403, 404)       | Clave inválida o modelo no disponible para tu cuenta | Revisa la clave y usa `--listar-modelos` para elegir otro modelo                   |
+| `429` / respuestas muy lentas con `nim`             | Límite de solicitudes por minuto                     | El cliente reintenta solo; para lotes grandes, espera o procesa por partes         |
+| `400` con `response_format` en `nim`                | El modelo no admite ese modo de salida estructurada  | El programa prueba los otros modos solo; si todos fallan, elige otro modelo        |
+| `PermissionError` al guardar el Excel               | El archivo está abierto en Excel                     | Ciérralo y vuelve a ejecutar                                                       |
+| `No se encontraron imágenes`                        | La carpeta está vacía o con otras extensiones        | Revisa `--carpeta` y que las fotos sean `.jpg`, `.jpeg`, `.png` o `.webp`          |
 
 ### Diagnosticar con `--debug`
 
@@ -365,7 +453,10 @@ Muestra, por cada franja, la respuesta cruda del modelo **antes** de la normaliz
 
 ```
 ocr-boletas/
-├── main.py                  # Todo el programa
+├── main.py                  # Programa completo (backends Ollama y NVIDIA)
+├── main2.py                 # Versión solo NVIDIA, con la clave en .env
+├── .env                     # Tu clave (NO subir a git)
+├── .env.example             # Plantilla del .env
 ├── README.md                # Este archivo
 ├── boletas/                 # Imágenes de entrada
 └── boletas_extraidas.xlsx   # Resultado (se genera al ejecutar)
